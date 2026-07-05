@@ -8,3 +8,4 @@ outputs/*
 !outputs/.gitkeep
 !outputs/return_distribution.png
 !outputs/var_es_comparison.png
+interview_notes.md
