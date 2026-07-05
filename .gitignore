@@ -6,4 +6,5 @@ __pycache__/
 .vscode/
 outputs/*
 !outputs/.gitkeep
-interview_notes.md
+!outputs/return_distribution.png
+!outputs/var_es_comparison.png
