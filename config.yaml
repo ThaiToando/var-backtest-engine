@@ -1,0 +1,42 @@
+# ---- Portfolio definition ----
+portfolio:
+  equities:
+    - ticker: AAPL   # Technology
+    - ticker: JPM    # Financials
+    - ticker: XOM    # Energy
+    - ticker: JNJ    # Healthcare
+    - ticker: PG     # Consumer Staples
+    - ticker: CAT    # Industrials
+  commodities:
+    - ticker: GLD    # Gold
+    - ticker: USO    # Crude Oil
+    - ticker: UNG    # Natural Gas
+
+  weighting_scheme: equal   # options: "equal", "inverse_vol" and we'll implement both, this picks the default
+
+# ---- Data window ----
+data:
+  start_date: "2018-01-01"
+  end_date: "2026-07-01"     # yesterday-ish; yfinance will just cap at latest available
+  price_field: "Close"       # could use "Adj Close" and decision we'll revisit when we write data_loader
+
+# ---- VaR model settings ----
+var:
+  confidence_levels: [0.95, 0.99]
+  lookback_windows: [250, 500]     # trading days
+  horizon_days: 1                  # base horizon; 10-day scaling computed separately
+  monte_carlo:
+    num_simulations: 100000
+    random_seed: 42
+
+# ---- Backtesting settings ----
+backtest:
+  # rolling window used to estimate VaR at each point before checking next day's actual loss
+  estimation_window: 250
+  stress_periods:
+    covid_crash:
+      start: "2020-02-15"
+      end: "2020-04-30"
+    energy_shock_2022:
+      start: "2022-01-01"
+      end: "2022-10-31"
