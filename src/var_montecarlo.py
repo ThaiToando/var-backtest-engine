@@ -69,7 +69,36 @@ def simulate_portfolio_returns(
         mean, cov, num_simulations, distribution, degrees_of_freedom, random_seed
     )
     return sim_asset_returns @ aligned_weights
+def simulate_multiday_paths(
+    returns: pd.DataFrame,
+    weights: pd.Series,
+    num_paths: int,
+    horizon_days: int,
+    window: int | None = None,
+    distribution: str = "t",
+    degrees_of_freedom: int = 5,
+    random_seed: int = 42,
+) -> np.ndarray:
+    """
+    Simulates NUM_PATHS possible portfolio trajectories over HORIZON_DAYS,
+    by drawing a fresh daily return for each day of each path (a random-walk
+    assumption: no autocorrelation day to day, consistent with the iid draws
+    used elsewhere in this project) and compounding them into a cumulative
+    return path. Returns shape (num_paths, horizon_days + 1), where column 0
+    is day-zero (0% return) for every path.
+    """
+    sample = returns if window is None else returns.iloc[-window:]
+    aligned_weights = weights.reindex(sample.columns).values
+    mean = sample.mean().values
+    cov = sample.cov().values
 
+    total_draws = num_paths * horizon_days
+    sim_asset_returns = _simulate_asset_returns(
+        mean, cov, total_draws, distribution, degrees_of_freedom, random_seed
+    )
+    daily_port_returns = (sim_asset_returns @ aligned_weights).reshape(num_paths, horizon_days)
+    cumulative = np.cumprod(1 + daily_port_returns, axis=1) - 1
+    return np.hstack([np.zeros((num_paths, 1)), cumulative])
 
 def var_es_from_simulated(sim_portfolio_returns: np.ndarray, confidence: float) -> tuple[float, float]:
     alpha = 1 - confidence

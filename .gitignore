@@ -9,3 +9,4 @@ outputs/*
 !outputs/return_distribution.png
 !outputs/var_es_comparison.png
 interview_notes.md
+!outputs/monte_carlo_paths.html
