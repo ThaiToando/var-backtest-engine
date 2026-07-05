@@ -4,11 +4,12 @@ history day by day, re-estimating VaR at each point using only PRIOR data,
 then checking whether the actual next-day loss exceeded it. This is what
 turns a VaR model into something empirically validated rather than asserted.
 
-Also implements the Kupiec (unconditional coverage) test: a formal
-statistical test of whether the observed exception rate is consistent with
-the rate the model claims (e.g. a 95% VaR model should be exceeded ~5% of
-the time). Answers "is this deviation from 5% just noise, or is the model
-actually miscalibrated?" with a p-value instead of eyeballing it.
+Also implements:
+- Kupiec (unconditional coverage) test: is the observed exception rate
+  statistically consistent with the rate the model claims?
+- Christoffersen (independence) test: do exceptions cluster together in
+  time, rather than being spread out? Kupiec alone can't see this.
+- Combined conditional coverage test: both checks at once.
 """
 import numpy as np
 import pandas as pd
@@ -27,8 +28,6 @@ def kupiec_test(exceptions: np.ndarray, confidence: float, significance: float =
     p = 1 - confidence  # expected exception rate
     observed_rate = x / n
 
-    # Likelihood ratio statistic -- handle x=0 and x=n edge cases separately
-    # to avoid log(0).
     if x == 0:
         log_l_null = n * np.log(1 - p)
         log_l_alt = n * np.log(1 - observed_rate) if observed_rate < 1 else 0
@@ -50,8 +49,46 @@ def kupiec_test(exceptions: np.ndarray, confidence: float, significance: float =
         "observed_rate": observed_rate,
         "lr_statistic": lr_stat,
         "p_value": p_value,
-        "reject_model": reject,  # True = model FAILS the test (miscalibrated)
+        "reject_model": reject,
     }
+
+
+def christoffersen_independence_test(exceptions: np.ndarray, significance: float = 0.05) -> dict:
+    exc = exceptions.astype(int)
+    n00 = n01 = n10 = n11 = 0
+    for prev, curr in zip(exc[:-1], exc[1:]):
+        if prev == 0 and curr == 0: n00 += 1
+        elif prev == 0 and curr == 1: n01 += 1
+        elif prev == 1 and curr == 0: n10 += 1
+        elif prev == 1 and curr == 1: n11 += 1
+
+    n0, n1 = n00 + n01, n10 + n11
+    pi01 = n01 / n0 if n0 > 0 else 0.0
+    pi11 = n11 / n1 if n1 > 0 else 0.0
+    pi = (n01 + n11) / (n0 + n1) if (n0 + n1) > 0 else 0.0
+
+    def term(count, prob):
+        return count * np.log(prob) if count > 0 and prob > 0 else 0.0
+
+    log_l_null = term(n00 + n10, 1 - pi) + term(n01 + n11, pi)
+    log_l_alt = term(n00, 1 - pi01) + term(n01, pi01) + term(n10, 1 - pi11) + term(n11, pi11)
+
+    lr_ind = -2 * (log_l_null - log_l_alt)
+    p_value = 1 - chi2.cdf(lr_ind, df=1)
+
+    return {
+        "n01": n01, "n11": n11,
+        "pi01": pi01, "pi11": pi11,
+        "lr_statistic": lr_ind,
+        "p_value": p_value,
+        "reject_independence": p_value < significance,
+    }
+
+
+def conditional_coverage_test(kupiec_result: dict, christoffersen_result: dict, significance: float = 0.05) -> dict:
+    lr_cc = kupiec_result["lr_statistic"] + christoffersen_result["lr_statistic"]
+    p_value = 1 - chi2.cdf(lr_cc, df=2)
+    return {"lr_statistic": lr_cc, "p_value": p_value, "reject_model": p_value < significance}
 
 
 def rolling_backtest(
@@ -64,16 +101,11 @@ def rolling_backtest(
     degrees_of_freedom: int = 5,
     base_seed: int = 42,
 ) -> pd.DataFrame:
-    """
-    Returns a DataFrame indexed by date with columns: var_estimate,
-    actual_loss, exception (bool). One row per day tested (i.e. every day
-    after the first estimation_window days).
-    """
     port_rets = portfolio_returns(rets, weights)
     dates, var_estimates, actual_losses = [], [], []
 
     for t in range(estimation_window, len(rets)):
-        window_rets = rets.iloc[t - estimation_window:t]          # strictly prior data
+        window_rets = rets.iloc[t - estimation_window:t]
         window_port_rets = port_rets.iloc[t - estimation_window:t]
 
         if method == "historical":
@@ -85,7 +117,7 @@ def rolling_backtest(
             sim = simulate_portfolio_returns(
                 window_rets, weights, num_simulations,
                 distribution=distribution, degrees_of_freedom=degrees_of_freedom,
-                random_seed=base_seed + t,  # vary seed per day so paths aren't identical
+                random_seed=base_seed + t,
             )
             var, _ = var_es_from_simulated(sim, confidence)
         else:
@@ -128,11 +160,19 @@ if __name__ == "__main__":
                 degrees_of_freedom=mc_cfg["degrees_of_freedom"],
                 base_seed=mc_cfg["random_seed"],
             )
-            test = kupiec_test(result["exception"].values, cl)
-            verdict = "REJECTED (miscalibrated)" if test["reject_model"] else "not rejected"
+            kupiec = kupiec_test(result["exception"].values, cl)
+            christoffersen = christoffersen_independence_test(result["exception"].values)
+            cc = conditional_coverage_test(kupiec, christoffersen)
+
+            kupiec_verdict = "REJECTED" if kupiec["reject_model"] else "pass"
+            indep_verdict = "CLUSTERED" if christoffersen["reject_independence"] else "independent"
+            cc_verdict = "REJECTED" if cc["reject_model"] else "pass"
+
             print(
-                f"  Confidence {cl:.0%}: {test['n_exceptions']}/{test['n_obs']} exceptions "
-                f"({test['observed_rate']:.2%} vs expected {test['expected_rate']:.2%}) "
-                f"-- Kupiec p={test['p_value']:.3f} -> {verdict}"
+                f"  Confidence {cl:.0%}: {kupiec['n_exceptions']}/{kupiec['n_obs']} exceptions "
+                f"({kupiec['observed_rate']:.2%} vs expected {kupiec['expected_rate']:.2%})"
             )
+            print(f"    Kupiec (coverage):         p={kupiec['p_value']:.3f} -> {kupiec_verdict}")
+            print(f"    Christoffersen (timing):   p={christoffersen['p_value']:.3f} -> {indep_verdict}")
+            print(f"    Combined (both):           p={cc['p_value']:.3f} -> {cc_verdict}")
         print()
