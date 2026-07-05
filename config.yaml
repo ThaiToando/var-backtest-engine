@@ -23,15 +23,15 @@ data:
 # ---- VaR model settings ----
 var:
   confidence_levels: [0.95, 0.99]
-  lookback_windows: [250, 500]     # trading days
-  horizon_days: 1                  # base horizon; 10-day scaling computed separately
+  lookback_windows: [250, 500]
+  horizon_days: 1
   monte_carlo:
     num_simulations: 100000
     random_seed: 42
+    distribution: "t"
+    degrees_of_freedom: 5
 
-# ---- Backtesting settings ----
 backtest:
-  # rolling window used to estimate VaR at each point before checking next day's actual loss
   estimation_window: 250
   stress_periods:
     covid_crash:
@@ -40,3 +40,4 @@ backtest:
     energy_shock_2022:
       start: "2022-01-01"
       end: "2022-10-31"
+
